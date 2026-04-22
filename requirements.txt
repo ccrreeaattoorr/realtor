@@ -1,7 +1,6 @@
 streamlit
 elasticsearch
 anthropic
-captcha
 streamlit-autorefresh
 Pillow
 requests

@@ -492,10 +492,30 @@ def _new_captcha() -> str:
 
 
 def _captcha_image(text: str) -> bytes:
-    from captcha.image import ImageCaptcha
-    img = ImageCaptcha(width=200, height=60)
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    import random as _rnd
+    img = Image.new("RGB", (200, 60), color=(30, 30, 46))
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("arial.ttf", 36)
+    except Exception:
+        font = ImageFont.load_default(size=36)
+    # Draw noise lines
+    for _ in range(5):
+        x1, y1 = _rnd.randint(0, 200), _rnd.randint(0, 60)
+        x2, y2 = _rnd.randint(0, 200), _rnd.randint(0, 60)
+        draw.line([(x1, y1), (x2, y2)], fill=(80, 80, 100), width=1)
+    # Draw each character with slight offset
+    x = 15
+    for ch in text:
+        y = _rnd.randint(5, 15)
+        draw.text((x, y), ch, font=font, fill=(
+            _rnd.randint(180, 255), _rnd.randint(180, 255), _rnd.randint(180, 255)
+        ))
+        x += 35
+    img = img.filter(ImageFilter.SMOOTH)
     buf = io.BytesIO()
-    img.generate_image(text).save(buf, format="PNG")
+    img.save(buf, format="PNG")
     return buf.getvalue()
 
 
