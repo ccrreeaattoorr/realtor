@@ -235,13 +235,17 @@ def page_main(es_ok: bool, is_admin: bool = False):
     page = st.session_state.page
 
     if total_pages > 1:
-        cols = st.columns(total_pages)
-        for i, col in enumerate(cols, 1):
-            with col:
-                label = f"**{i}**" if i == page else str(i)
-                if st.button(label, key=f"pg_{i}", use_container_width=True):
-                    st.session_state.page = i
-                    st.rerun()
+        c_left, c_info, c_right = st.columns([1, 3, 1])
+        with c_left:
+            if st.button("←", key="pg_prev", disabled=page <= 1, width='stretch'):
+                st.session_state.page -= 1
+                st.rerun()
+        with c_info:
+            st.markdown(f"<div style='text-align:center;padding-top:6px'>{page} / {total_pages}</div>", unsafe_allow_html=True)
+        with c_right:
+            if st.button("→", key="pg_next", disabled=page >= total_pages, width='stretch'):
+                st.session_state.page += 1
+                st.rerun()
         page = st.session_state.page
 
     page_hits = hits[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
