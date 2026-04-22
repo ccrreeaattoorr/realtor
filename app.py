@@ -607,7 +607,10 @@ def _login_page():
             captcha_ok = _render_captcha("login")
             if st.button("כניסה", use_container_width=True, type="primary", key="btn_login"):
                 if not captcha_ok:
+                    st.session_state["captcha_login"] = _new_captcha()
+                    st.session_state["captcha_ts_login"] = __import__("time").time()
                     st.error("קוד האימות שגוי")
+                    st.rerun()
                 else:
                     role = _check_login(identifier, password)
                     if role:
@@ -629,7 +632,10 @@ def _login_page():
             captcha_ok_reg = _render_captcha("register")
             if st.button("הרשמה", use_container_width=True, type="primary", key="btn_register"):
                 if not captcha_ok_reg:
+                    st.session_state["captcha_register"] = _new_captcha()
+                    st.session_state["captcha_ts_register"] = __import__("time").time()
                     st.error("קוד האימות שגוי")
+                    st.rerun()
                 elif reg_pass != reg_pass2:
                     st.error("הסיסמאות אינן תואמות")
                 else:
