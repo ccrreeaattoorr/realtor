@@ -15,6 +15,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 import elastic
 import whatsapp
 import ai_parser
@@ -525,15 +526,34 @@ def _render_captcha(key: str) -> bool:
             st.session_state[code_key] = _new_captcha()
             st.session_state[ts_key] = time.time()
             st.rerun()
-        st.progress(remaining / _CAPTCHA_TTL, text=f"⏱️ מתחדש בעוד {remaining} שניות")
+        components.html(f"""
+<style>
+  body {{margin:0;background:transparent}}
+  .timer {{font-family:sans-serif;font-size:13px;color:#aaa;direction:rtl}}
+  .bar {{height:4px;background:#3a3a4d;border-radius:2px;margin-top:4px}}
+  .fill {{height:4px;background:#ffd479;border-radius:2px;transition:width 1s linear}}
+</style>
+<div class="timer" id="txt">⏱️ מתחדש בעוד {remaining} שניות</div>
+<div class="bar"><div class="fill" id="fill" style="width:{int(remaining/_CAPTCHA_TTL*100)}%"></div></div>
+<script>
+  var s = {remaining};
+  var total = {_CAPTCHA_TTL};
+  function tick() {{
+    s--;
+    document.getElementById('txt').textContent = '⏱️ מתחדש בעוד ' + s + ' שניות';
+    document.getElementById('fill').style.width = Math.max(0, s/total*100) + '%';
+    if (s > 0) setTimeout(tick, 1000);
+    else document.getElementById('txt').textContent = 'הקוד פג תוקף — לחץ על הכפתור לרענון';
+  }}
+  setTimeout(tick, 1000);
+</script>
+""", height=35)
 
     answer = st.text_input("הקלד את הקוד בתמונה", key=f"captcha_input_{key}")
     return answer.strip().upper() == code
 
 
 def _login_page():
-    from streamlit_autorefresh import st_autorefresh
-    st_autorefresh(interval=1000, limit=None, key="captcha_autorefresh")
     st.markdown("<style>div.block-container{padding-top:0rem!important;margin-top:-3rem}</style>", unsafe_allow_html=True)
     col = st.columns([1, 2, 1])[1]
     with col:
