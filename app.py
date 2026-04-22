@@ -366,14 +366,19 @@ def page_admin(es_ok: bool):
     users = _load_users()
     if users:
         for phone, u in list(users.items()):
-            c1, c2, c3, c4, c5 = st.columns([2, 2, 3, 1, 1])
+            c1, c2, c3, c4, c5, c6 = st.columns([2, 2, 3, 1, 1, 1])
             c1.write(phone)
             c2.write(u.get("name", ""))
             c3.write(u.get("email", ""))
             c4.write(u.get("role", "user"))
-            if c5.button("🗑️", key=f"del_user_{phone}", help="מחק משתמש"):
-                del users[phone]
-                _save_users(users)
+            is_admin_user = u.get("role") == "admin"
+            if c5.button("👑" if not is_admin_user else "👤", key=f"promote_{phone}",
+                         help="קדם לאדמין" if not is_admin_user else "הורד למשתמש רגיל"):
+                u["role"] = "user" if is_admin_user else "admin"
+                elastic.es_save_user(phone, u)
+                st.rerun()
+            if c6.button("🗑️", key=f"del_user_{phone}", help="מחק משתמש"):
+                elastic.es_delete_user(phone)
                 st.rerun()
     else:
         st.info("אין משתמשים רשומים עדיין.")
