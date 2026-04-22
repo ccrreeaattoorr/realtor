@@ -8,6 +8,7 @@ Run: streamlit run realtor/app.py
 import hashlib
 import io
 import json
+import os
 import random
 import string
 import uuid
@@ -433,8 +434,12 @@ def page_admin(es_ok: bool):
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
+def _admin_hash() -> str:
+    pw = os.getenv("ADMIN_PASSWORD", "")
+    return hashlib.sha256(pw.encode()).hexdigest() if pw else ""
+
 _ADMIN_USERS = {
-    "admin": {"hash": hashlib.sha256("REDACTED".encode()).hexdigest(), "role": "admin"},
+    "admin": {"hash": _admin_hash(), "role": "admin"},
 }
 _USERS_FILE = Path(__file__).parent / "data" / "users.json"
 
