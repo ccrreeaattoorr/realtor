@@ -1,0 +1,6 @@
+data/data.txt
+data/users.json
+data/visits.json
+__pycache__/
+*.pyc
+.idea/

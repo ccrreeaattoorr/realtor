@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: davinci-realestate
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.headless true --server.address 0.0.0.0
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ES_URL
+        sync: false
+      - key: ES_API_KEY
+        sync: false
