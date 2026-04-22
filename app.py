@@ -499,7 +499,7 @@ def _captcha_image(text: str) -> bytes:
     return buf.getvalue()
 
 
-_CAPTCHA_TTL = 60  # seconds
+_CAPTCHA_TTL = 200  # seconds
 
 
 def _render_captcha(key: str) -> bool:
