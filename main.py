@@ -90,6 +90,9 @@ class Listing:
         raw_price = m.group(1).replace(',', '')
         if raw_price.count('.') > 1:
             parts = raw_price.split('.')
+            # Reject date strings like 14.04.2026 (3 parts, 4-digit year > 1900)
+            if len(parts) == 3 and len(parts[2]) == 4 and parts[2].isdigit() and int(parts[2]) > 1900:
+                return None
             if len(parts[-1]) < 3:
                 parts[-1] = parts[-1].ljust(3, '0')
             raw_price = ''.join(parts)
