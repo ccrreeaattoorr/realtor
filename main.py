@@ -14,8 +14,58 @@ Usage:
 import re
 import argparse
 import sys
+from pathlib import Path
 
 sys.stdout.reconfigure(encoding='utf-8')
+
+_CITY_FILE = Path(__file__).parent / "data" / "cities_israel.txt"
+
+
+def _load_city_map() -> dict[str, str]:
+    """
+    Parse cities_israel.txt into {variant: canonical_name}.
+    Handles both plain lines ("נתניה") and lines with an abbreviation
+    ("קריית מוצקין - ק. מוצקין").  Adds "תל אביב" as an alias for
+    "תל אביב-יפו" automatically.
+    """
+    city_map: dict[str, str] = {}
+    if not _CITY_FILE.exists():
+        return city_map
+    for line in _CITY_FILE.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if " - " in line:
+            canonical, abbrev = line.split(" - ", 1)
+            canonical = canonical.strip()
+            abbrev = abbrev.strip()
+            city_map[canonical] = canonical
+            city_map[abbrev] = canonical
+        else:
+            city_map[line] = line
+    if "תל אביב-יפו" in city_map:
+        city_map.setdefault("תל אביב", "תל אביב-יפו")
+    return city_map
+
+
+_CITY_MAP: dict[str, str] = _load_city_map()
+
+
+def _build_cities_re(city_map: dict[str, str]) -> re.Pattern:
+    """
+    Build a regex matching any city variant.
+    Sorts longest-first so multi-word names win over their prefixes.
+    Optional leading ב handles the Hebrew preposition "in" attached directly
+    to the city name (e.g. "בנתניה", "בק. מוצקין").
+    """
+    variants = sorted(city_map.keys(), key=len, reverse=True)
+    escaped = [re.escape(v) for v in variants]
+    # (?<![א-ת]) — not mid-word; ב? — optional attached preposition;
+    # (?![א-ת])  — not followed by Hebrew letter (prevents partial matches)
+    return re.compile(r"(?<![א-ת])ב?(" + "|".join(escaped) + r")(?![א-ת])")
+
+
+_CITIES: re.Pattern = _build_cities_re(_CITY_MAP)
 
 
 class Listing:
@@ -56,26 +106,15 @@ class Listing:
             return None
         return price
 
-    # Israeli cities/towns for fallback scan
-    _CITIES = re.compile(
-        r'(?:^|[\s,\-–(])('
-        r'תל[\s\-]?אביב|ירושלים|חיפה|ראשון[\s\-]?לציון|פתח[\s\-]?תקווה|אשדוד|נתניה|באר[\s\-]?שבע'
-        r'|בני[\s\-]?ברק|רמת[\s\-]?גן|חולון|בת[\s\-]?ים|רחובות|אשקלון|הרצליה|כפר[\s\-]?סבא'
-        r'|מודיעין|רמת[\s\-]?השרון|נס[\s\-]?ציונה|לוד|רמלה|הוד[\s\-]?השרון|יבנה|קריית[\s\-]?גת'
-        r'|קריית[\s\-]?מוצקין|קריית[\s\-]?ביאליק|קריית[\s\-]?ים|קריית[\s\-]?אתא|קריית[\s\-]?שמונה'
-        r'|נשר|טירת[\s\-]?כרמל|עכו|נהריה|עפולה|נצרת|כרמיאל|מגדל[\s\-]?העמק|יוקנעם'
-        r'|זכרון[\s\-]?יעקב|חדרה|פרדס[\s\-]?חנה|בית[\s\-]?שמש|מעלה[\s\-]?אדומים'
-        r'|אלעד|אור[\s\-]?יהודה|גבעת[\s\-]?שמואל|קרית[\s\-]?אונו|אריאל|מודיעין[\s\-]?עילית'
-        r')(?!\s[א-ת])',  # not followed by space + Hebrew letter (would be a name, not a city)
-        re.IGNORECASE,
-    )
-
     def _extract_location(self) -> str:
         _STOP = re.compile(r'[,\-–|\n(]')
 
         def clean(s: str) -> str:
             m = _STOP.search(s)
             return s[:m.start()].strip() if m else s.strip()
+
+        def normalize(s: str) -> str:
+            return _CITY_MAP.get(s.strip(), s.strip())
 
         # Ordered from most-specific to least-specific
         patterns = [
@@ -87,17 +126,20 @@ class Listing:
             r'בשכונת\s+([^\n,\-–|]+)',
             r'שכונת\s+([^\n,\-–|]+)',
             r'שכונה[:\s]+([^\n,\-–|]+)',
-            r'(?:ב)(קרית[^\s,\n\-–|]+|קריית[^\s,\n\-–|]+)',
         ]
         for pat in patterns:
             m = re.search(pat, self.raw)
             if m:
-                return clean(m.group(1))
+                candidate = clean(m.group(1))
+                city_m = _CITIES.search(candidate)
+                if city_m:
+                    return normalize(city_m.group(1))
+                return candidate
 
-        # Fallback: scan for a known city name anywhere in the text
-        m = self._CITIES.search(self.raw)
+        # Fallback: scan for any known city or abbreviation anywhere in the text
+        m = _CITIES.search(self.raw)
         if m:
-            return m.group(1).strip()
+            return normalize(m.group(1))
 
         return ''
 

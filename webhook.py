@@ -20,6 +20,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
 from elastic import get_client, ensure_index, INDEX
+from main import Listing
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -82,51 +83,22 @@ def _process_value(value: dict):
 
 def _save_to_es(text: str, sender: str, timestamp: str, phone_number: str):
     try:
+        listing = Listing(text)
         es = get_client()
         ensure_index(es)
         es.index(index=INDEX, document={
             "raw":         text,
             "sender":      sender,
-            "rooms":       _extract_rooms(text),
-            "price":       _extract_price(text),
-            "location":    _extract_location(text),
-            "phone":       _extract_contact_phone(text),
+            "rooms":       listing.rooms,
+            "price":       listing.price,
+            "location":    listing.location,
+            "phone":       listing.phone,
             "source_file": f"whatsapp_live:{phone_number}",
             "ingested_at": timestamp,
         })
         log.info("Saved to Elasticsearch.")
     except Exception as e:
         log.error("ES save failed: %s", e)
-
-
-# ── Field extractors (same logic as main.py Listing class) ───────────────────
-import re
-
-def _extract_rooms(text: str):
-    m = re.search(r'(\d+(?:\.\d+)?)\s*חדרים', text)
-    return int(float(m.group(1))) if m else None
-
-def _extract_price(text: str):
-    m = re.search(r'מחיר[^:\n]*[:\s]+([\d,.]+)\s*(₪|♠️)?', text)
-    if not m:
-        return None
-    price = float(m.group(1).replace(',', ''))
-    if price < 10000:
-        price *= 1_000_000
-    return int(price)
-
-def _extract_location(text: str):
-    for pat in [r'רח[׳\']\s+([^\n]+)', r'רחוב\s+([^\n]+)',
-                r'בשכונת\s+([^\n]+)', r'שכונת\s+([^\n]+)',
-                r'ב(קרית[^\s,\n]+|קריית[^\s,\n]+|חיפה|נשר|טירת|עכו|נהריה)']:
-        m = re.search(pat, text)
-        if m:
-            return m.group(1).strip()
-    return None
-
-def _extract_contact_phone(text: str):
-    m = re.search(r'(0\d[\d\-]{7,10})', text)
-    return m.group(1) if m else None
 
 
 if __name__ == "__main__":

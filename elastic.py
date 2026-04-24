@@ -9,6 +9,7 @@ Connection resolution order:
 """
 
 import hashlib
+import json
 import os
 import re
 from datetime import datetime, timezone
@@ -142,7 +143,13 @@ def search_listings(
     query = {"bool": {"must": must, "filter": filter_}} if (must or filter_) else {"match_all": {}}
 
     resp = es.search(index=INDEX, query=query, size=size, sort=[{"ingested_at": "desc"}])
-    return [hit["_source"] for hit in resp["hits"]["hits"]]
+    return [{**hit["_source"], "_id": hit["_id"]} for hit in resp["hits"]["hits"]]
+
+
+def update_listing(doc_id: str, fields: dict) -> None:
+    """Partially update a listing document by its ES _id."""
+    es = get_client()
+    es.update(index=INDEX, id=doc_id, doc=fields, refresh=True)
 
 
 def count_total() -> int:
@@ -168,6 +175,67 @@ def delete_before(dt: str) -> int:
     resp = es.delete_by_query(
         index=INDEX,
         query={"range": {"ingested_at": {"lt": dt}}},
+        refresh=True,
+    )
+    return resp["deleted"]
+
+
+def count_between(start_dt: str, end_dt: str) -> int:
+    """Count documents with ingested_at in [start_dt, end_dt)."""
+    es = get_client()
+    if not es.indices.exists(index=INDEX):
+        return 0
+    return es.count(
+        index=INDEX,
+        query={"range": {"ingested_at": {"gte": start_dt, "lt": end_dt}}},
+    )["count"]
+
+
+def backup_between(start_dt: str, end_dt: str, backup_dir: Path | str) -> tuple[int, Path]:
+    """
+    Export all documents with ingested_at in [start_dt, end_dt) to a JSONL file.
+    Returns (doc_count, file_path).
+    """
+    es = get_client()
+    backup_dir = Path(backup_dir)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    query = {"range": {"ingested_at": {"gte": start_dt, "lt": end_dt}}}
+    batch = 1000
+    docs = []
+
+    resp = es.search(index=INDEX, query=query, size=batch, sort=[{"ingested_at": "asc"}])
+    hits = resp["hits"]["hits"]
+    docs.extend(h["_source"] for h in hits)
+
+    while len(hits) == batch:
+        last_sort = hits[-1]["sort"]
+        resp = es.search(
+            index=INDEX, query=query, size=batch,
+            sort=[{"ingested_at": "asc"}], search_after=last_sort,
+        )
+        hits = resp["hits"]["hits"]
+        docs.extend(h["_source"] for h in hits)
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    start_tag = start_dt[:10].replace("-", "")
+    end_tag = end_dt[:10].replace("-", "")
+    out_path = backup_dir / f"backup_{start_tag}_{end_tag}_{ts}.jsonl"
+    with out_path.open("w", encoding="utf-8") as f:
+        for doc in docs:
+            f.write(json.dumps(doc, ensure_ascii=False) + "\n")
+
+    return len(docs), out_path
+
+
+def delete_between(start_dt: str, end_dt: str) -> int:
+    """Delete documents with ingested_at in [start_dt, end_dt). Returns deleted count."""
+    es = get_client()
+    if not es.indices.exists(index=INDEX):
+        return 0
+    resp = es.delete_by_query(
+        index=INDEX,
+        query={"range": {"ingested_at": {"gte": start_dt, "lt": end_dt}}},
         refresh=True,
     )
     return resp["deleted"]

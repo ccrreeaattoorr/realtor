@@ -124,6 +124,45 @@ def _fmt_phone(raw: str) -> str:
 
 # ── Pages ─────────────────────────────────────────────────────────────────────
 
+def _render_edit_form(doc: dict, key: str):
+    """Inline edit form for a single listing. Only rendered for admins."""
+    doc_id = doc.get("_id", "")
+    with st.form(key=f"edit_form_{key}"):
+        new_raw = st.text_area("טקסט מלא", value=doc.get("raw", ""), height=180)
+        c1, c2 = st.columns(2)
+        with c1:
+            new_rooms = st.number_input(
+                "חדרים", min_value=0, max_value=20,
+                value=int(doc.get("rooms") or 0), step=1,
+            )
+            new_price = st.number_input(
+                "מחיר (₪)", min_value=0, max_value=100_000_000,
+                value=int(doc.get("price") or 0), step=50_000, format="%d",
+            )
+        with c2:
+            new_location = st.text_input("מיקום", value=doc.get("location") or "")
+            new_phone = st.text_input("טלפון", value=doc.get("phone") or "")
+
+        col_save, col_cancel = st.columns(2)
+        with col_save:
+            save = st.form_submit_button("💾 שמור", type="primary", use_container_width=True)
+        with col_cancel:
+            cancel = st.form_submit_button("✕ ביטול", use_container_width=True)
+
+    if save and doc_id:
+        elastic.update_listing(doc_id, {
+            "raw":      new_raw.strip(),
+            "rooms":    new_rooms or None,
+            "price":    new_price or None,
+            "location": new_location.strip(),
+            "phone":    new_phone.strip(),
+        })
+        st.success("המודעה עודכנה")
+        st.rerun()
+    if cancel:
+        st.rerun()
+
+
 def page_main(es_ok: bool, is_admin: bool = False):
     st.title("🏡 סינון מודעות נדל\"ן")
 
@@ -271,12 +310,25 @@ def page_main(es_ok: bool, is_admin: bool = False):
                 unsafe_allow_html=True,
             )
 
-        if st.button(f"📲 שלח לווטסאפ", key=f"wa_{i}"):
-            try:
-                whatsapp.send_text(wa_number, doc.get("raw", ""))
-                st.success("נשלח!")
-            except Exception as e:
-                st.error(f"שגיאה: {e}")
+        if is_admin:
+            bc_wa, bc_edit = st.columns(2)
+            with bc_wa:
+                if st.button("📲 שלח לווטסאפ", key=f"wa_{i}", use_container_width=True):
+                    try:
+                        whatsapp.send_text(wa_number, doc.get("raw", ""))
+                        st.success("נשלח!")
+                    except Exception as e:
+                        st.error(f"שגיאה: {e}")
+            with bc_edit:
+                with st.popover("✏️ ערוך מודעה", use_container_width=True):
+                    _render_edit_form(doc, key=str(i))
+        else:
+            if st.button("📲 שלח לווטסאפ", key=f"wa_{i}"):
+                try:
+                    whatsapp.send_text(wa_number, doc.get("raw", ""))
+                    st.success("נשלח!")
+                except Exception as e:
+                    st.error(f"שגיאה: {e}")
 
         st.divider()
 
@@ -366,6 +418,55 @@ def page_admin(es_ok: bool):
 
     st.divider()
 
+    # ── Backup & delete between dates ─────────────────────────────────────────
+    st.markdown("#### 📦 גיבוי ומחיקה לפי טווח תאריכים")
+
+    _BACKUP_DIR = Path(__file__).parent / "data" / "backups"
+
+    col_s, col_e = st.columns(2)
+    with col_s:
+        range_start = st.date_input("מתאריך", value=datetime(2020, 1, 1).date(), key="backup_start")
+    with col_e:
+        range_end = st.date_input("עד תאריך (לא כולל)", value=datetime.now(timezone.utc).date(), key="backup_end")
+
+    if range_start < range_end:
+        start_iso = datetime.combine(range_start, datetime.min.time()).replace(tzinfo=timezone.utc).isoformat()
+        end_iso   = datetime.combine(range_end,   datetime.min.time()).replace(tzinfo=timezone.utc).isoformat()
+        range_count = elastic.count_between(start_iso, end_iso)
+
+        if range_count:
+            st.warning(f"⚠️ {range_count:,} מודעות בטווח זה")
+        else:
+            st.info("אין מודעות בטווח זה")
+
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            if st.button("📦 גבה בלבד", disabled=range_count == 0, key="btn_backup_only"):
+                count, path = elastic.backup_between(start_iso, end_iso, _BACKUP_DIR)
+                st.session_state.last_backup_path = str(path)
+                st.success(f"גובו {count:,} מודעות → {path.name}")
+        with col_b2:
+            if st.button("📦🗑️ גבה ומחק", type="primary", disabled=range_count == 0, key="btn_backup_delete"):
+                count, path = elastic.backup_between(start_iso, end_iso, _BACKUP_DIR)
+                deleted = elastic.delete_between(start_iso, end_iso)
+                st.session_state.last_backup_path = str(path)
+                st.success(f"גובו {count:,} מודעות ונמחקו {deleted:,} מ-Elasticsearch")
+                st.rerun()
+
+        backup_path = Path(st.session_state.get("last_backup_path", ""))
+        if backup_path.exists():
+            st.download_button(
+                "⬇️ הורד קובץ גיבוי",
+                data=backup_path.read_bytes(),
+                file_name=backup_path.name,
+                mime="application/jsonlines",
+                key="dl_backup",
+            )
+    else:
+        st.warning("תאריך ההתחלה חייב להיות לפני תאריך הסיום")
+
+    st.divider()
+
     # ── Registered users ──────────────────────────────────────────────────────
     st.subheader("👥 משתמשים רשומים")
     users = _load_users()
@@ -380,10 +481,12 @@ def page_admin(es_ok: bool):
             if c5.button("👑" if not is_admin_user else "👤", key=f"promote_{phone}",
                          help="קדם לאדמין" if not is_admin_user else "הורד למשתמש רגיל"):
                 u["role"] = "user" if is_admin_user else "admin"
-                elastic.es_save_user(phone, u)
+                users[phone] = u
+                _save_users(users)
                 st.rerun()
             if c6.button("🗑️", key=f"del_user_{phone}", help="מחק משתמש"):
-                elastic.es_delete_user(phone)
+                users.pop(phone, None)
+                _save_users(users)
                 st.rerun()
     else:
         st.info("אין משתמשים רשומים עדיין.")
