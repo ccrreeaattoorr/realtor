@@ -163,6 +163,61 @@ def _render_edit_form(doc: dict, key: str):
         st.rerun()
 
 
+def _render_listing_card(
+    doc: dict,
+    idx: int,
+    is_fav: bool,
+    user_id: str,
+    is_admin: bool,
+    wa_number: str,
+):
+    """Render a single listing card with action buttons."""
+    doc_id    = doc.get("_id", "")
+    price_str = f"{doc['price']:,} ₪" if doc.get("price") else "לא צוין"
+    rooms_str = f"{doc['rooms']} חדרים" if doc.get("rooms") else "לא צוין"
+    loc_str   = doc.get("location") or "לא צוין"
+    phone_str = _fmt_phone(doc.get("phone")) if doc.get("phone") else "לא צוין"
+
+    st.markdown(f"""
+<div class="listing-meta">
+  <strong>מודעה {idx}</strong> &nbsp;|&nbsp;
+  🛏️ {rooms_str} &nbsp;|&nbsp;
+  💰 {price_str} &nbsp;|&nbsp;
+  📍 {loc_str} &nbsp;|&nbsp;
+  📞 {phone_str}
+</div>
+""", unsafe_allow_html=True)
+
+    with st.expander("📄 הצג טקסט מלא"):
+        st.markdown(
+            f'<div class="listing-card">{doc.get("raw", "")}</div>',
+            unsafe_allow_html=True,
+        )
+
+    cols = st.columns(3) if is_admin else st.columns(2)
+    with cols[0]:
+        if st.button("📲 שלח לווטסאפ", key=f"wa_{idx}", use_container_width=True):
+            try:
+                whatsapp.send_text(wa_number, doc.get("raw", ""))
+                st.success("נשלח!")
+            except Exception as e:
+                st.error(f"שגיאה: {e}")
+    with cols[1]:
+        fav_label = "❤️ מועדף" if is_fav else "🤍 שמור"
+        if st.button(fav_label, key=f"fav_{idx}", use_container_width=True):
+            if is_fav:
+                elastic.remove_favorite(user_id, doc_id)
+            else:
+                elastic.add_favorite(user_id, doc_id)
+            st.rerun()
+    if is_admin:
+        with cols[2]:
+            with st.popover("✏️ ערוך מודעה", use_container_width=True):
+                _render_edit_form(doc, key=str(idx))
+
+    st.divider()
+
+
 def page_main(es_ok: bool, is_admin: bool = False):
     st.title("🏡 סינון מודעות נדל\"ן")
 
@@ -289,48 +344,45 @@ def page_main(es_ok: bool, is_admin: bool = False):
 
     page_hits = hits[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
 
+    user_id = st.session_state.get("username", "")
+    fav_ids = elastic.get_user_favorite_ids(user_id) if user_id else set()
+
     for i, doc in enumerate(page_hits, (page - 1) * PAGE_SIZE + 1):
-        price_str = f"{doc['price']:,} ₪" if doc.get("price") else "לא צוין"
-        rooms_str = f"{doc['rooms']} חדרים" if doc.get("rooms") else "לא צוין"
-        loc_str   = doc.get("location") or "לא צוין"
-        phone_str = _fmt_phone(doc.get("phone")) if doc.get("phone") else "לא צוין"
-        st.markdown(f"""
-<div class="listing-meta">
-  <strong>מודעה {i}</strong> &nbsp;|&nbsp;
-  🛏️ {rooms_str} &nbsp;|&nbsp;
-  💰 {price_str} &nbsp;|&nbsp;
-  📍 {loc_str} &nbsp;|&nbsp;
-  📞 {phone_str}
-</div>
-""", unsafe_allow_html=True)
+        _render_listing_card(
+            doc=doc, idx=i,
+            is_fav=doc.get("_id", "") in fav_ids,
+            user_id=user_id, is_admin=is_admin,
+            wa_number=wa_number,
+        )
 
-        with st.expander("📄 הצג טקסט מלא"):
-            st.markdown(
-                f'<div class="listing-card">{doc.get("raw", "")}</div>',
-                unsafe_allow_html=True,
-            )
 
-        if is_admin:
-            bc_wa, bc_edit = st.columns(2)
-            with bc_wa:
-                if st.button("📲 שלח לווטסאפ", key=f"wa_{i}", use_container_width=True):
-                    try:
-                        whatsapp.send_text(wa_number, doc.get("raw", ""))
-                        st.success("נשלח!")
-                    except Exception as e:
-                        st.error(f"שגיאה: {e}")
-            with bc_edit:
-                with st.popover("✏️ ערוך מודעה", use_container_width=True):
-                    _render_edit_form(doc, key=str(i))
-        else:
-            if st.button("📲 שלח לווטסאפ", key=f"wa_{i}"):
-                try:
-                    whatsapp.send_text(wa_number, doc.get("raw", ""))
-                    st.success("נשלח!")
-                except Exception as e:
-                    st.error(f"שגיאה: {e}")
+def page_favorites(es_ok: bool, is_admin: bool = False):
+    st.title("⭐ המועדפים שלי")
 
-        st.divider()
+    if not es_ok:
+        st.info("הפעל את Elasticsearch כדי לצפות במועדפים.")
+        return
+
+    user_id = st.session_state.get("username", "")
+    favorites = elastic.get_favorite_listings(user_id)
+
+    if not favorites:
+        st.info("לא שמרת מועדפים עדיין — לחץ 🤍 על מודעה בדף הראשי כדי לשמור.")
+        return
+
+    st.metric("סה\"כ מועדפים", len(favorites))
+    st.divider()
+
+    raw_phone = user_id if user_id.isdigit() else ""
+    wa_number = "972" + raw_phone[1:] if raw_phone.startswith("0") else raw_phone
+
+    for i, doc in enumerate(favorites, 1):
+        _render_listing_card(
+            doc=doc, idx=f"fav_pg_{i}",
+            is_fav=True,
+            user_id=user_id, is_admin=is_admin,
+            wa_number=wa_number,
+        )
 
 
 def page_admin(es_ok: bool):
@@ -764,7 +816,7 @@ es_ok = elastic.ping()
 is_admin = st.session_state.get("role") == "admin"
 
 with st.sidebar:
-    nav_options = ["🏡 מודעות", "🔧 ניהול"] if is_admin else ["🏡 מודעות"]
+    nav_options = ["🏡 מודעות", "⭐ מועדפים", "🔧 ניהול"] if is_admin else ["🏡 מודעות", "⭐ מועדפים"]
     nav = st.radio("ניווט", nav_options, label_visibility="collapsed")
     st.divider()
     st.caption(f"👤 {st.session_state.get('username')}")
@@ -775,5 +827,7 @@ with st.sidebar:
 
 if nav == "🏡 מודעות":
     page_main(es_ok, is_admin=is_admin)
+elif nav == "⭐ מועדפים":
+    page_favorites(es_ok, is_admin=is_admin)
 else:
     page_admin(es_ok)

@@ -282,3 +282,83 @@ def ping() -> bool:
         return get_client().ping()
     except Exception:
         return False
+
+
+# ── Favorites ──────────────────────────────────────────────────────────────────
+
+FAVORITES_INDEX = "realestate_favorites"
+
+_FAVORITES_MAPPING = {
+    "mappings": {
+        "properties": {
+            "user_id":    {"type": "keyword"},
+            "listing_id": {"type": "keyword"},
+            "saved_at":   {"type": "date"},
+        }
+    },
+    "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+}
+
+
+def _fav_id(user_id: str, listing_id: str) -> str:
+    return hashlib.sha1(f"{user_id}:{listing_id}".encode()).hexdigest()
+
+
+def _ensure_favorites_index(es: Elasticsearch):
+    if not es.indices.exists(index=FAVORITES_INDEX):
+        es.indices.create(index=FAVORITES_INDEX, body=_FAVORITES_MAPPING)
+
+
+def add_favorite(user_id: str, listing_id: str) -> None:
+    es = get_client()
+    _ensure_favorites_index(es)
+    es.index(
+        index=FAVORITES_INDEX,
+        id=_fav_id(user_id, listing_id),
+        document={
+            "user_id":    user_id,
+            "listing_id": listing_id,
+            "saved_at":   datetime.now(timezone.utc).isoformat(),
+        },
+        refresh=True,
+    )
+
+
+def remove_favorite(user_id: str, listing_id: str) -> None:
+    es = get_client()
+    if not es.indices.exists(index=FAVORITES_INDEX):
+        return
+    try:
+        es.delete(index=FAVORITES_INDEX, id=_fav_id(user_id, listing_id), refresh=True)
+    except Exception:
+        pass
+
+
+def get_user_favorite_ids(user_id: str) -> set[str]:
+    """Return the set of listing _ids the user has saved."""
+    es = get_client()
+    if not es.indices.exists(index=FAVORITES_INDEX):
+        return set()
+    resp = es.search(
+        index=FAVORITES_INDEX,
+        query={"term": {"user_id": user_id}},
+        size=1000,
+        _source=["listing_id"],
+    )
+    return {hit["_source"]["listing_id"] for hit in resp["hits"]["hits"]}
+
+
+def get_favorite_listings(user_id: str) -> list[dict]:
+    """Return full listing documents for all of a user's saved favorites."""
+    listing_ids = list(get_user_favorite_ids(user_id))
+    if not listing_ids:
+        return []
+    es = get_client()
+    if not es.indices.exists(index=INDEX):
+        return []
+    resp = es.mget(index=INDEX, ids=listing_ids)
+    return [
+        {**doc["_source"], "_id": doc["_id"]}
+        for doc in resp["docs"]
+        if doc.get("found")
+    ]
