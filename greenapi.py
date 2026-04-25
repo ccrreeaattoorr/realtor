@@ -19,6 +19,12 @@ _DATA_FILE = Path(__file__).parent / "data" / "data.txt"
 
 @lru_cache(maxsize=1)
 def _credentials() -> dict:
+    import os
+    api_url   = os.getenv("GREEN_API_URL")
+    instance  = os.getenv("GREEN_API_INSTANCE")
+    token     = os.getenv("GREEN_API_TOKEN")
+    if api_url and instance and token:
+        return {"apiUrl": api_url, "idInstance": instance, "apiTokenInstance": token}
     text = _DATA_FILE.read_text(encoding="utf-8")
     out = {}
     for key in ("apiUrl", "idInstance", "apiTokenInstance"):
@@ -36,6 +42,28 @@ def _base_url() -> str:
 
 def _token() -> str:
     return _credentials()["apiTokenInstance"]
+
+
+def send_text(to: str, message: str) -> dict:
+    """Send a plain text WhatsApp message via Green API.
+    `to` is E.164 without +, e.g. '972546546855'. Converted to chatId internally.
+    """
+    digits = "".join(c for c in to if c.isdigit())
+    if digits.startswith("0"):
+        digits = "972" + digits[1:]
+    chat_id = f"{digits}@c.us"
+    r = requests.post(
+        f"{_base_url()}/sendMessage/{_token()}",
+        json={"chatId": chat_id, "message": message},
+        timeout=30,
+    )
+    if not r.ok:
+        try:
+            detail = r.json()
+        except Exception:
+            detail = r.text
+        raise RuntimeError(f"HTTP {r.status_code}: {detail}")
+    return r.json()
 
 
 def get_state() -> dict:

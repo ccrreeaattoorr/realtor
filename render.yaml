@@ -11,3 +11,9 @@ services:
         sync: false
       - key: ES_API_KEY
         sync: false
+      - key: GREEN_API_URL
+        sync: false
+      - key: GREEN_API_INSTANCE
+        sync: false
+      - key: GREEN_API_TOKEN
+        sync: false

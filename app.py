@@ -19,6 +19,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import elastic
 import whatsapp
+import greenapi
 import ai_parser
 from main import Listing, split_listings
 
@@ -197,11 +198,14 @@ def _render_listing_card(
     cols = st.columns(3) if is_admin else st.columns(2)
     with cols[0]:
         if st.button("📲 שלח לווטסאפ", key=f"wa_{idx}", use_container_width=True):
-            try:
-                whatsapp.send_text(wa_number, doc.get("raw", ""))
-                st.success("נשלח!")
-            except Exception as e:
-                st.error(f"שגיאה: {e}")
+            if not wa_number.strip():
+                st.error("הכנס מספר טלפון בסרגל הצד לפני שליחה")
+            else:
+                try:
+                    greenapi.send_text(wa_number.strip(), doc.get("raw", ""))
+                    st.success("נשלח!")
+                except Exception as e:
+                    st.error(f"שגיאה: {e}")
     with cols[1]:
         fav_label = "❤️ מועדף" if is_fav else "🤍 שמור"
         if st.button(fav_label, key=f"fav_{idx}", use_container_width=True):
@@ -355,6 +359,19 @@ def page_main(es_ok: bool, is_admin: bool = False):
             wa_number=wa_number,
         )
 
+    if total_pages > 1:
+        b_left, b_info, b_right = st.columns([1, 3, 1])
+        with b_left:
+            if st.button("←", key="pg_prev_bot", disabled=page <= 1, width='stretch'):
+                st.session_state.page -= 1
+                st.rerun()
+        with b_info:
+            st.markdown(f"<div style='text-align:center;padding-top:6px'>{page} / {total_pages}</div>", unsafe_allow_html=True)
+        with b_right:
+            if st.button("→", key="pg_next_bot", disabled=page >= total_pages, width='stretch'):
+                st.session_state.page += 1
+                st.rerun()
+
 
 def page_favorites(es_ok: bool, is_admin: bool = False):
     st.title("⭐ המועדפים שלי")
@@ -383,6 +400,57 @@ def page_favorites(es_ok: bool, is_admin: bool = False):
             user_id=user_id, is_admin=is_admin,
             wa_number=wa_number,
         )
+
+
+def page_profile():
+    st.title("👤 הפרופיל שלי")
+
+    username = st.session_state.get("username", "")
+    is_admin_account = st.session_state.get("role") == "admin" and username == "admin"
+
+    if is_admin_account:
+        st.info("חשבון אדמין — פרטים לא ניתנים לעריכה.")
+        return
+
+    users = _load_users()
+    user = users.get(username)
+    if not user:
+        st.error("משתמש לא נמצא.")
+        return
+
+    st.markdown(f"**טלפון:** {username}")
+    st.divider()
+
+    with st.form("profile_form"):
+        st.markdown("#### ✏️ עריכת פרטים")
+        new_name  = st.text_input("שם מלא",  value=user.get("name", ""))
+        new_email = st.text_input("אימייל",   value=user.get("email", ""))
+        st.markdown("#### 🔒 שינוי סיסמה (השאר ריק לאי-שינוי)")
+        cur_pass  = st.text_input("סיסמה נוכחית",  type="password")
+        new_pass  = st.text_input("סיסמה חדשה",    type="password")
+        new_pass2 = st.text_input("אימות סיסמה חדשה", type="password")
+        save = st.form_submit_button("💾 שמור שינויים", type="primary", use_container_width=True)
+
+    if save:
+        updated = dict(user)
+        updated["name"]  = new_name.strip()
+        updated["email"] = new_email.strip().lower()
+
+        if cur_pass or new_pass or new_pass2:
+            if hashlib.sha256(cur_pass.encode()).hexdigest() != user["hash"]:
+                st.error("הסיסמה הנוכחית שגויה")
+                return
+            if new_pass != new_pass2:
+                st.error("הסיסמאות החדשות אינן תואמות")
+                return
+            if len(new_pass) < 4:
+                st.error("הסיסמה חייבת להכיל לפחות 4 תווים")
+                return
+            updated["hash"] = hashlib.sha256(new_pass.encode()).hexdigest()
+
+        users[username] = updated
+        _save_users(users)
+        st.success("הפרופיל עודכן בהצלחה")
 
 
 def page_admin(es_ok: bool):
@@ -816,7 +884,7 @@ es_ok = elastic.ping()
 is_admin = st.session_state.get("role") == "admin"
 
 with st.sidebar:
-    nav_options = ["🏡 מודעות", "⭐ מועדפים", "🔧 ניהול"] if is_admin else ["🏡 מודעות", "⭐ מועדפים"]
+    nav_options = ["🏡 מודעות", "⭐ מועדפים", "👤 פרופיל", "🔧 ניהול"] if is_admin else ["🏡 מודעות", "⭐ מועדפים", "👤 פרופיל"]
     nav = st.radio("ניווט", nav_options, label_visibility="collapsed")
     st.divider()
     st.caption(f"👤 {st.session_state.get('username')}")
@@ -829,5 +897,7 @@ if nav == "🏡 מודעות":
     page_main(es_ok, is_admin=is_admin)
 elif nav == "⭐ מועדפים":
     page_favorites(es_ok, is_admin=is_admin)
+elif nav == "👤 פרופיל":
+    page_profile()
 else:
     page_admin(es_ok)

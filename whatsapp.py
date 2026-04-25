@@ -33,7 +33,12 @@ def send_text(to: str, message: str) -> dict:
             "text": {"body": message},
         },
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise RuntimeError(f"HTTP {resp.status_code}: {detail}")
     return resp.json()
 
 
