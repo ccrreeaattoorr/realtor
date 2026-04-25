@@ -574,7 +574,7 @@ def page_admin(es_ok: bool):
                 st.rerun()
 
         backup_path = Path(st.session_state.get("last_backup_path", ""))
-        if backup_path.exists():
+        if backup_path.is_file():
             st.download_button(
                 "⬇️ הורד קובץ גיבוי",
                 data=backup_path.read_bytes(),
